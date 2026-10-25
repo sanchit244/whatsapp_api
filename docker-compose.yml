@@ -1,0 +1,103 @@
+version: '3.9'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: whatsapp-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: Sanchit@8984
+      MYSQL_DATABASE: whatsapp_db
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pSanchit@8984"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whatsapp-network
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-redis
+    command: redis-server --appendonly yes --requirepass redis_password
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whatsapp-network
+    restart: unless-stopped
+
+  # RabbitMQ Message Queue
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: whatsapp-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"      # AMQP port
+      - "15672:15672"    # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./scripts/rabbitmq-init.sh:/docker-entrypoint-initdb.d/init.sh
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whatsapp-network
+    restart: unless-stopped
+
+  # PHPMyAdmin (MySQL GUI)
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: whatsapp-phpmyadmin
+    environment:
+      PMA_HOST: whatsapp-mysql
+      PMA_USER: root
+      PMA_PASSWORD: Sanchit@8984
+    ports:
+      - "8080:80"
+    networks:
+      - whatsapp-network
+    restart: unless-stopped
+    depends_on:
+      - mysql
+
+  # Redis Commander (Redis GUI)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: whatsapp-redis-commander
+    environment:
+      - REDIS_HOSTS=local:whatsapp-redis:6379:0:redis_password
+    ports:
+      - "8081:8081"
+    networks:
+      - whatsapp-network
+    restart: unless-stopped
+    depends_on:
+      - redis
+
+volumes:
+  mysql_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  whatsapp-network:
+    driver: bridge
