@@ -1,3 +1,4 @@
+import { API_URL as API } from '../config/api';
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
@@ -74,7 +75,7 @@ export const ClientDashboard: React.FC = () => {
   const fetchCampaigns = async () => {
     if (!auth?.token) return;
     try {
-      const res = await fetch('http://localhost:3000/api/v1/campaigns', {
+      const res = await fetch(API + '/api/v1/campaigns', {
         headers: { Authorization: `Bearer ${auth.token}` },
       });
       const data = await res.json();
@@ -92,7 +93,7 @@ export const ClientDashboard: React.FC = () => {
   const fetchWhatsappConfig = async () => {
     if (!auth?.token) return;
     try {
-      const res = await fetch('http://localhost:3000/api/v1/whatsapp/config', {
+      const res = await fetch(API + '/api/v1/whatsapp/config', {
         headers: { Authorization: `Bearer ${auth.token}` },
       });
       const data = await res.json();
@@ -116,7 +117,7 @@ export const ClientDashboard: React.FC = () => {
     if (!auth?.token) return;
     setMessagesLoading(true);
     try {
-      const res = await fetch(`http://localhost:3000/api/v1/campaigns/${campaignId}/messages`, {
+      const res = await fetch(`${API}/api/v1/campaigns/${campaignId}/messages`, {
         headers: { Authorization: `Bearer ${auth.token}` },
       });
       const data = await res.json();
@@ -137,7 +138,7 @@ export const ClientDashboard: React.FC = () => {
     // Check system announcement
     const checkAnnouncement = async () => {
       try {
-        const res = await fetch('http://localhost:3000/api/v1/announcement');
+        const res = await fetch(API + '/api/v1/announcement');
         const data = await res.json();
         if (res.ok && data.active) {
           setAnnouncement(data);
@@ -214,7 +215,7 @@ export const ClientDashboard: React.FC = () => {
     }
 
     try {
-      const res = await fetch('http://localhost:3000/api/v1/campaigns', {
+      const res = await fetch(API + '/api/v1/campaigns', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -264,7 +265,7 @@ export const ClientDashboard: React.FC = () => {
     setVerifyStatus(null);
 
     try {
-      const res = await fetch('http://localhost:3000/api/v1/whatsapp/config', {
+      const res = await fetch(API + '/api/v1/whatsapp/config', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -296,7 +297,7 @@ export const ClientDashboard: React.FC = () => {
 
     setVerifyStatus({ message: 'Verifying with Meta Graph API...' });
     try {
-      const res = await fetch('http://localhost:3000/api/v1/whatsapp/verify-credentials', {
+      const res = await fetch(API + '/api/v1/whatsapp/verify-credentials', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -326,7 +327,7 @@ export const ClientDashboard: React.FC = () => {
     setTestSendStatus(null);
 
     try {
-      const res = await fetch('http://localhost:3000/api/v1/whatsapp/test-send', {
+      const res = await fetch(API + '/api/v1/whatsapp/test-send', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

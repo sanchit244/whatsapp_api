@@ -1,4 +1,5 @@
 import React, { createContext, useState } from 'react';
+import { API_URL } from '../config/api';
 
 export const AuthContext = createContext<any>(null);
 
@@ -16,7 +17,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string, portal: 'admin' | 'client' = 'client') => {
     try {
       const endpoint = portal === 'admin' ? 'admin-login' : 'login';
-      const response = await fetch(`http://localhost:3000/api/v1/auth/${endpoint}`, {
+      const response = await fetch(`${API_URL}/api/v1/auth/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),

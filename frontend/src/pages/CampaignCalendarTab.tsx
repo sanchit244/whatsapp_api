@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { extractErrorMessage } from '../utils/errorHelper';
 
-const API = 'http://localhost:3000';
+import { API_URL as API } from '../config/api';
 
 interface CalendarEvent {
   id: string;

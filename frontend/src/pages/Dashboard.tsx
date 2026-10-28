@@ -1,3 +1,4 @@
+import { API_URL as API } from '../config/api';
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
@@ -82,7 +83,7 @@ export const Dashboard: React.FC = () => {
   const fetchStats = async () => {
     if (!auth?.token) return;
     try {
-      const res = await fetch('http://localhost:3000/api/v1/admin/stats', {
+      const res = await fetch(API + '/api/v1/admin/stats', {
         headers: { Authorization: `Bearer ${auth.token}` },
       });
       const data = await res.json();
@@ -98,7 +99,7 @@ export const Dashboard: React.FC = () => {
   const fetchAllCampaigns = async () => {
     if (!auth?.token) return;
     try {
-      const res = await fetch('http://localhost:3000/api/v1/admin/campaigns', {
+      const res = await fetch(API + '/api/v1/admin/campaigns', {
         headers: { Authorization: `Bearer ${auth.token}` },
       });
       const data = await res.json();
@@ -114,7 +115,7 @@ export const Dashboard: React.FC = () => {
   const fetchUsers = async () => {
     if (!auth?.token) return;
     try {
-      const res = await fetch('http://localhost:3000/api/v1/admin/users', {
+      const res = await fetch(API + '/api/v1/admin/users', {
         headers: { Authorization: `Bearer ${auth.token}` },
       });
       const data = await res.json();
@@ -130,7 +131,7 @@ export const Dashboard: React.FC = () => {
   const fetchMetaConfig = async () => {
     if (!auth?.token) return;
     try {
-      const res = await fetch('http://localhost:3000/api/v1/admin/meta-config', {
+      const res = await fetch(API + '/api/v1/admin/meta-config', {
         headers: { Authorization: `Bearer ${auth.token}` },
       });
       const data = await res.json();
@@ -176,7 +177,7 @@ export const Dashboard: React.FC = () => {
     setSaveStatus(null);
 
     try {
-      const res = await fetch('http://localhost:3000/api/v1/admin/meta-config', {
+      const res = await fetch(API + '/api/v1/admin/meta-config', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -239,7 +240,7 @@ export const Dashboard: React.FC = () => {
       const passwordToSet =
         approvalPasswordOption === 'custom' ? approvalCustomPassword.trim() : undefined;
 
-      const res = await fetch(`http://localhost:3000/api/v1/admin/users/${approvalModalUser.id}/approve`, {
+      const res = await fetch(`${API}/api/v1/admin/users/${approvalModalUser.id}/approve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -283,7 +284,7 @@ export const Dashboard: React.FC = () => {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:3000/api/v1/admin/users/${userId}/reject`, {
+      const res = await fetch(`${API}/api/v1/admin/users/${userId}/reject`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -315,7 +316,7 @@ export const Dashboard: React.FC = () => {
     setCredsSuccessMsg('');
     try {
       const res = await fetch(
-        `http://localhost:3000/api/v1/admin/users/${credsModalUser.id}/credentials`,
+        `${API}/api/v1/admin/users/${credsModalUser.id}/credentials`,
         {
           method: 'POST',
           headers: {
@@ -349,7 +350,7 @@ export const Dashboard: React.FC = () => {
   const handleToggleUserStatus = async (userId: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'active' ? 'suspended' : 'active';
     try {
-      const res = await fetch(`http://localhost:3000/api/v1/admin/users/${userId}/status`, {
+      const res = await fetch(`${API}/api/v1/admin/users/${userId}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

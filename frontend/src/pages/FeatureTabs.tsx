@@ -5,7 +5,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 
-const API = 'http://localhost:3000';
+import { API_URL as API, SOCKET_URL } from '../config/api';
 
 // ─── Colour tokens ────────────────────────────────────────────────────────────
 const COLORS = {
@@ -412,7 +412,7 @@ export const InboxTab: React.FC<{ token: string; tenantId?: string }> = ({ token
     if (!tenantId) return;
     let io: any;
     import('socket.io-client').then(({ io: ioFn }) => {
-      io = ioFn('http://localhost:3000', { transports: ['websocket', 'polling'] });
+      io = ioFn(SOCKET_URL, { transports: ['websocket', 'polling'] });
       socketRef.current = io;
       io.on('connect', () => {
         setSocketConnected(true);
