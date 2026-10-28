@@ -7,17 +7,35 @@ let client: RedisClientType<{}, {}, {}, 2>;
 
 export async function initializeRedis(): Promise<RedisClientType<{}, {}, {}, 2>> {
   try {
-    client = createClient({
-      RESP: 2,
-      socket: {
+    const redisUrl = process.env.REDIS_URL;
+
+    if (redisUrl) {
+      client = createClient({
+        url: redisUrl,
+        RESP: 2,
+      }) as any;
+    } else {
+      const isUpstash = (process.env.REDIS_HOST || '').includes('upstash');
+      const useTls = process.env.REDIS_TLS === 'true' || isUpstash;
+
+      const socketOptions: any = {
         host: process.env.REDIS_HOST || 'localhost',
         port: parseInt(process.env.REDIS_PORT || '6379'),
         reconnectStrategy: (retries: number) =>
           retries >= 1 ? new Error('Redis is unavailable') : 100,
-      },
-      password: process.env.REDIS_PASSWORD || undefined,
-      database: parseInt(process.env.REDIS_DB || '0'),
-    });
+      };
+
+      if (useTls) {
+        socketOptions.tls = true;
+      }
+
+      client = createClient({
+        RESP: 2,
+        socket: socketOptions,
+        password: process.env.REDIS_PASSWORD || undefined,
+        database: parseInt(process.env.REDIS_DB || '0'),
+      });
+    }
 
     client.on('error', (err: any) => {
       logger.error('Redis client error', err);

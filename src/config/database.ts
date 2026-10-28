@@ -100,13 +100,20 @@ async function connect(): Promise<DatabaseConnection> {
 }
 
 export async function initializeDatabase(): Promise<DatabasePool> {
-  const connectionConfig = {
+  const isTiDB = (process.env.DB_HOST || '').includes('tidbcloud') || (process.env.DATABASE_URL || process.env.DB_URL || '').includes('tidbcloud');
+  const useSSL = process.env.DB_SSL === 'true' || isTiDB;
+
+  const connectionConfig: any = {
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '3306'),
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || 'Sanchit@8984',
     database: process.env.DB_NAME || 'whatsapp_db',
     multipleStatements: true,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    ...(useSSL ? { ssl: { minVersion: 'TLSv1.2', rejectUnauthorized: true } } : {}),
   };
 
   try {
