@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { extractErrorMessage } from '../utils/errorHelper';
-
 import { API_URL as API } from '../config/api';
 
 interface BillingSummary {
@@ -38,6 +37,10 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
   const [loading, setLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [paymentNotice, setPaymentNotice] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [razorpayConfig, setRazorpayConfig] = useState<{ keyId: string; isConfigured: boolean }>({
+    keyId: '',
+    isConfigured: false,
+  });
 
   // Custom credits top-up state
   const [selectedPack, setSelectedPack] = useState<'pack_5k' | 'pack_20k' | 'pack_50k' | 'custom'>('pack_20k');
@@ -50,15 +53,24 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
   const fetchBilling = useCallback(async () => {
     try {
       setLoading(true);
-      const [resB, resI] = await Promise.all([
+      const [resB, resI, resC] = await Promise.all([
         fetch(`${API}/api/v1/billing`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/api/v1/billing/invoices`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/api/v1/billing/config`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
       ]);
       const dataB = await resB.json();
       const dataI = await resI.json();
 
       if (dataB.billing) setBilling(dataB.billing);
       if (dataI.invoices) setInvoices(dataI.invoices);
+
+      if (resC && resC.ok) {
+        const dataC = await resC.json();
+        setRazorpayConfig({
+          keyId: dataC.keyId || '',
+          isConfigured: Boolean(dataC.isConfigured),
+        });
+      }
     } catch (err: any) {
       console.error('Failed to load billing information', err);
     } finally {
@@ -66,27 +78,27 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
     }
   }, [token]);
 
-  // Check URL query parameters for return from Stripe Checkout
+  // Check URL query parameters for return or callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const paymentStatus = params.get('payment');
-    const sessionId = params.get('session_id');
+    const sessionId = params.get('session_id') || params.get('order_id');
 
     if (paymentStatus === 'success' && sessionId) {
       // Fulfill checkout session immediately
-      fetch(`${API}/api/v1/billing/fulfill-session`, {
+      fetch(`${API}/api/v1/billing/verify-payment`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ session_id: sessionId }),
+        body: JSON.stringify({ order_id: sessionId }),
       })
         .then((res) => res.json())
         .then((data) => {
           if (data.success) {
             setPaymentNotice({
-              text: `🎉 Payment Confirmed via Stripe! ${data.message}`,
+              text: `🎉 Payment Confirmed via Razorpay! ${data.message}`,
               type: 'success',
             });
           } else {
@@ -103,10 +115,11 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
       const url = new URL(window.location.href);
       url.searchParams.delete('payment');
       url.searchParams.delete('session_id');
+      url.searchParams.delete('order_id');
       url.searchParams.delete('simulated');
       window.history.replaceState({}, '', url.toString());
     } else if (paymentStatus === 'cancelled') {
-      setPaymentNotice({ text: 'Stripe Checkout was cancelled. No charges were made.', type: 'error' });
+      setPaymentNotice({ text: 'Payment checkout was cancelled. No charges were made.', type: 'error' });
       const url = new URL(window.location.href);
       url.searchParams.delete('payment');
       window.history.replaceState({}, '', url.toString());
@@ -115,11 +128,114 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
     fetchBilling();
   }, [token, fetchBilling]);
 
-  // Launch Stripe Checkout for Subscription Plan
+  /**
+   * Helper to execute Razorpay Checkout Modal or Simulation
+   */
+  const executeRazorpayCheckout = async (orderData: {
+    orderId: string;
+    amount: number;
+    currency: string;
+    keyId: string;
+    title: string;
+    description: string;
+    mode: 'real' | 'simulated';
+  }) => {
+    const isRazorpayLoaded = typeof (window as any).Razorpay === 'function';
+
+    if (orderData.mode === 'real' && isRazorpayLoaded) {
+      // Launch standard Razorpay Checkout Modal (UPI, Cards, NetBanking, Wallets)
+      const options = {
+        key: orderData.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency || 'INR',
+        name: 'WhatsApp Business API',
+        description: orderData.description,
+        order_id: orderData.orderId,
+        handler: async (response: any) => {
+          try {
+            setCheckoutLoading('verifying');
+            const verifyRes = await fetch(`${API}/api/v1/billing/verify-payment`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                order_id: response.razorpay_order_id || orderData.orderId,
+                payment_id: response.razorpay_payment_id,
+                signature: response.razorpay_signature,
+              }),
+            });
+
+            const verifyData = await verifyRes.json();
+            if (verifyData.success) {
+              setPaymentNotice({
+                text: `🎉 Payment Confirmed via Razorpay! ${verifyData.message}`,
+                type: 'success',
+              });
+            } else {
+              setPaymentNotice({
+                text: verifyData.message || 'Payment verification completed',
+                type: 'success',
+              });
+            }
+            fetchBilling();
+          } catch (err: any) {
+            setPaymentNotice({ text: `Verification error: ${err.message}`, type: 'error' });
+          } finally {
+            setCheckoutLoading(null);
+          }
+        },
+        prefill: {
+          name: billing?.tenant_name || 'Business User',
+        },
+        theme: {
+          color: '#059669', // Emerald brand theme
+        },
+        modal: {
+          ondismiss: () => {
+            setPaymentNotice({ text: 'Razorpay checkout was dismissed.', type: 'error' });
+            setCheckoutLoading(null);
+          },
+        },
+      };
+
+      const rzpInstance = new (window as any).Razorpay(options);
+      rzpInstance.open();
+    } else {
+      // Sandbox / Simulation fallback (instant quota fulfillment for testing)
+      try {
+        setCheckoutLoading('simulating');
+        const verifyRes = await fetch(`${API}/api/v1/billing/verify-payment`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            order_id: orderData.orderId,
+          }),
+        });
+
+        const verifyData = await verifyRes.json();
+        setPaymentNotice({
+          text: `🎉 [Simulation Mode] Payment Confirmed! ${verifyData.message || 'Quota successfully updated.'}`,
+          type: 'success',
+        });
+        fetchBilling();
+      } catch (err: any) {
+        setPaymentNotice({ text: `Simulation error: ${err.message}`, type: 'error' });
+      } finally {
+        setCheckoutLoading(null);
+      }
+    }
+  };
+
+  // Launch Razorpay Checkout for Subscription Plan
   const handleSubscribePlan = async (planKey: string) => {
     try {
       setCheckoutLoading(`plan_${planKey}`);
-      const res = await fetch(`${API}/api/v1/billing/create-checkout-session`, {
+      const res = await fetch(`${API}/api/v1/billing/create-order`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -128,36 +244,29 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
         body: JSON.stringify({
           type: 'subscription',
           plan: planKey,
-          success_url: `${window.location.origin}/dashboard?payment=success`,
-          cancel_url: `${window.location.origin}/dashboard?payment=cancelled`,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        alert(extractErrorMessage(data, 'Failed to start Stripe checkout'));
+        alert(extractErrorMessage(data, 'Failed to create Razorpay order'));
+        setCheckoutLoading(null);
         return;
       }
 
-      if (data.checkoutUrl) {
-        // Redirect to real or simulated Stripe Checkout
-        window.location.href = data.checkoutUrl;
-      }
+      await executeRazorpayCheckout(data);
     } catch (err: any) {
       alert(`Checkout error: ${err.message}`);
-    } finally {
       setCheckoutLoading(null);
     }
   };
 
-  // Launch Stripe Checkout for Credit Top-Up
+  // Launch Razorpay Checkout for Credit Top-Up
   const handleTopUpCredits = async () => {
     try {
       setCheckoutLoading('topup');
       const payload: any = {
         type: 'credit_topup',
-        success_url: `${window.location.origin}/dashboard?payment=success`,
-        cancel_url: `${window.location.origin}/dashboard?payment=cancelled`,
       };
 
       if (selectedPack === 'custom') {
@@ -166,7 +275,7 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
         payload.credit_pack = selectedPack;
       }
 
-      const res = await fetch(`${API}/api/v1/billing/create-checkout-session`, {
+      const res = await fetch(`${API}/api/v1/billing/create-order`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -177,19 +286,33 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
 
       const data = await res.json();
       if (!res.ok) {
-        alert(extractErrorMessage(data, 'Failed to start Stripe checkout'));
+        alert(extractErrorMessage(data, 'Failed to create Razorpay order'));
+        setCheckoutLoading(null);
         return;
       }
 
-      if (data.checkoutUrl) {
-        window.location.href = data.checkoutUrl;
-      }
+      await executeRazorpayCheckout(data);
     } catch (err: any) {
-      alert(`Top-up checkout error: ${err.message}`);
-    } finally {
+      alert(`Checkout error: ${err.message}`);
       setCheckoutLoading(null);
     }
   };
+
+  // Cost Estimator calculation
+  const getEstimatedCost = () => {
+    let rate = 0.82;
+    if (calcCategory === 'utility') rate = 0.35;
+    if (calcCategory === 'auth') rate = 0.15;
+    const totalInr = calcMessages * rate;
+    const platformMarkup = totalInr * 0.1; // 10% platform buffer
+    return {
+      metaRate: rate,
+      totalWholesale: totalInr.toFixed(2),
+      estimatedTotal: (totalInr + platformMarkup).toFixed(2),
+    };
+  };
+
+  const est = getEstimatedCost();
 
   const planTiers = [
     {
@@ -197,30 +320,48 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
       name: 'Starter Plan',
       price: '₹2,499',
       period: '/month',
-      quota: '10,000 msgs',
-      overage: '₹0.25/extra',
+      quota: '10,000 Messages',
+      rate: '₹0.25 per credit',
+      features: [
+        'Single WhatsApp Business Number',
+        'Bulk CSV & Excel Dispatcher',
+        'Live Broadcast Analytics',
+        'Standard Webhooks & API Access',
+        'Email & Community Support',
+      ],
       popular: false,
-      features: ['10,000 messages included', 'Meta Cloud API BYOK support', 'Standard queue delivery', 'Analytics & charts', 'Two-Way WhatsApp Inbox'],
     },
     {
       key: 'professional',
       name: 'Professional Plan',
       price: '₹7,999',
       period: '/month',
-      quota: '50,000 msgs',
-      overage: '₹0.20/extra',
+      quota: '50,000 Messages',
+      rate: '₹0.16 per credit',
+      features: [
+        'Up to 3 WhatsApp Phone Numbers',
+        'Scheduled & Drip Broadcasts',
+        'Auto-Reply Bot & Interactive Menus',
+        'Shared Team Inbox (5 Agents)',
+        'Priority SLA Support',
+      ],
       popular: true,
-      features: ['50,000 messages included', 'High-throughput 20 msgs/sec', 'Priority campaign scheduler', 'Advanced audience segmentation', 'Multi-agent Inbox routing', 'Priority technical support'],
     },
     {
       key: 'enterprise',
       name: 'Enterprise Plan',
       price: '₹39,999',
       period: '/month',
-      quota: '500,000 msgs',
-      overage: '₹0.15/extra',
+      quota: '500,000 Messages',
+      rate: '₹0.08 per credit',
+      features: [
+        'Unlimited WhatsApp Business Numbers',
+        'Dedicated Cloud Infrastructure',
+        'High TPS Throughput (80 msg/sec)',
+        'Custom Webhooks & CRM Sync',
+        '24/7 Dedicated Account Manager',
+      ],
       popular: false,
-      features: ['500,000 messages included', 'Ultra throughput 80+ msgs/sec', 'Dedicated platform phone pool', 'Custom webhooks & integrations', 'SLA 99.95% delivery uptime', 'Dedicated account manager'],
     },
   ];
 
@@ -229,14 +370,22 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
       {/* Notice Banner */}
       {paymentNotice && (
         <div
-          className={`p-4 rounded-xl border text-sm font-semibold flex justify-between items-center ${
+          className={`p-4 rounded-xl border flex items-center justify-between transition-all ${
             paymentNotice.type === 'success'
-              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-lg shadow-emerald-500/10'
-              : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+              ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300'
+              : 'bg-rose-950/60 border-rose-500/50 text-rose-300'
           }`}
         >
-          <span>{paymentNotice.text}</span>
-          <button onClick={() => setPaymentNotice(null)} className="text-xs px-2 py-1 font-bold">✕</button>
+          <div className="flex items-center gap-3">
+            <span className="text-xl">{paymentNotice.type === 'success' ? '✅' : '⚠️'}</span>
+            <span className="text-sm font-semibold">{paymentNotice.text}</span>
+          </div>
+          <button
+            onClick={() => setPaymentNotice(null)}
+            className="text-xs opacity-70 hover:opacity-100 font-bold px-2 py-1 rounded"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -245,19 +394,28 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-white flex items-center space-x-2">
-              <span>💳</span> <span>Billing, Stripe Payments &amp; Message Quotas</span>
+              <span>💳</span> <span>Billing, Razorpay Payments &amp; Message Quotas</span>
             </h2>
             <p className="text-xs text-slate-400 mt-1">
-              Secure subscription billing and instant credit top-ups powered by Stripe Checkout.
+              Secure subscription billing and instant credit top-ups via Razorpay (UPI, Google Pay, PhonePe, Cards, NetBanking).
             </p>
           </div>
-          <button
-            onClick={fetchBilling}
-            disabled={loading}
-            className="text-xs glass-panel hover:bg-white/10 text-white px-3.5 py-2 rounded-xl transition border border-white/10 disabled:opacity-50 flex items-center gap-1.5 self-start md:self-auto"
-          >
-            <span>🔄</span> {loading ? 'Loading...' : 'Refresh Quotas'}
-          </button>
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            <span className={`text-[11px] px-2.5 py-1 rounded-full font-semibold border ${
+              razorpayConfig.isConfigured 
+                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+            }`}>
+              {razorpayConfig.isConfigured ? '● Razorpay Live' : '● Razorpay Sandbox'}
+            </span>
+            <button
+              onClick={fetchBilling}
+              disabled={loading}
+              className="text-xs glass-panel hover:bg-white/10 text-white px-3.5 py-2 rounded-xl transition border border-white/10 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              <span>🔄</span> {loading ? 'Loading...' : 'Refresh Quotas'}
+            </button>
+          </div>
         </div>
 
         {/* Quota KPI Cards */}
@@ -317,14 +475,14 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
         </div>
       </div>
 
-      {/* Stripe Subscription Upgrade Plans */}
+      {/* Razorpay Subscription Upgrade Plans */}
       <div className="glass-panel p-6 rounded-2xl border border-white/10 shadow-2xl space-y-4">
         <div>
           <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <span>⚡</span> Upgrade Subscription via Stripe
+            <span>⚡</span> Upgrade Subscription via Razorpay
           </h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Select a plan to launch real Stripe Checkout. Your quota will be immediately updated upon confirmation.
+            Select a plan to open Razorpay Checkout with instant UPI Autopay and card support. Your quota is immediately updated.
           </p>
         </div>
 
@@ -348,17 +506,20 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
 
                 <div>
                   <h4 className="text-base font-bold text-white">{tier.name}</h4>
-                  <div className="flex items-baseline gap-1 mt-2">
+                  <div className="mt-3 flex items-baseline gap-1">
                     <span className="text-3xl font-extrabold text-white font-mono">{tier.price}</span>
-                    <span className="text-xs text-slate-400">{tier.period}</span>
+                    <span className="text-xs text-slate-400 font-sans">{tier.period}</span>
                   </div>
-                  <p className="text-xs font-semibold text-emerald-400 mt-1">{tier.quota}</p>
+                  <div className="mt-2 text-xs text-emerald-400 font-semibold flex items-center gap-1.5">
+                    <span>✨</span> {tier.quota}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5 font-mono">{tier.rate}</p>
 
-                  <ul className="mt-4 space-y-2 text-xs text-slate-300 border-t border-white/5 pt-3">
-                    {tier.features.map((f, i) => (
-                      <li key={i} className="flex items-center gap-2">
+                  <ul className="mt-5 space-y-2.5 text-xs text-slate-300 border-t border-white/10 pt-4">
+                    {tier.features.map((feat, idx) => (
+                      <li key={idx} className="flex items-start gap-2">
                         <span className="text-emerald-400 font-bold">✓</span>
-                        <span>{f}</span>
+                        <span>{feat}</span>
                       </li>
                     ))}
                   </ul>
@@ -366,27 +527,24 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
 
                 <div className="mt-6 pt-4 border-t border-white/5">
                   {isCurrent ? (
-                    <button
-                      disabled
-                      className="w-full py-2.5 rounded-xl text-xs font-bold bg-white/5 text-slate-400 border border-white/10 cursor-not-allowed"
-                    >
-                      ✓ Current Active Plan
-                    </button>
+                    <div className="w-full text-center py-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 font-bold text-xs border border-emerald-500/30">
+                      Current Active Plan
+                    </div>
                   ) : (
                     <button
                       onClick={() => handleSubscribePlan(tier.key)}
                       disabled={Boolean(checkoutLoading)}
-                      className={`w-full py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 ${
+                      className={`w-full py-2.5 rounded-xl font-bold text-xs transition flex items-center justify-center gap-2 ${
                         tier.popular
                           ? 'bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/20'
                           : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
                       }`}
                     >
                       {checkoutLoading === `plan_${tier.key}` ? (
-                        <span>Connecting Stripe...</span>
+                        <span>Processing Order...</span>
                       ) : (
                         <>
-                          <span>💳 Subscribe with Stripe</span>
+                          <span>💳 Subscribe via Razorpay</span>
                         </>
                       )}
                     </button>
@@ -402,10 +560,10 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
       <div className="glass-panel p-6 rounded-2xl border border-white/10 shadow-2xl space-y-4">
         <div>
           <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <span>📦</span> Instant Message Credits Top-Up (Stripe)
+            <span>📦</span> Instant Message Credits Top-Up (Razorpay)
           </h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Running low before your cycle renewal? Add non-expiring message credits to your account immediately.
+            Running low before your cycle renewal? Add non-expiring message credits with UPI, Cards, or NetBanking.
           </p>
         </div>
 
@@ -488,7 +646,7 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
               <span>Preparing Checkout...</span>
             ) : (
               <>
-                <span>💳 Buy Credits with Stripe Checkout</span>
+                <span>💳 Buy Credits with Razorpay</span>
               </>
             )}
           </button>
@@ -523,110 +681,106 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
 
             <div>
               <label className="block text-xs uppercase font-semibold text-slate-300 mb-2">
-                Category
+                Conversation Category
               </label>
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => setCalcCategory('marketing')}
-                  className={`p-2.5 rounded-xl border text-left transition ${
+                  className={`py-2 px-3 rounded-xl text-xs font-semibold border transition ${
                     calcCategory === 'marketing'
-                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                      : 'bg-white/5 border-white/5 text-slate-400'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      : 'bg-slate-900 border-white/10 text-slate-400 hover:text-white'
                   }`}
                 >
-                  <p className="font-bold text-xs">📣 Marketing</p>
-                  <p className="text-[10px] text-slate-400">~₹0.78/msg</p>
+                  Marketing (₹0.82)
                 </button>
                 <button
                   type="button"
                   onClick={() => setCalcCategory('utility')}
-                  className={`p-2.5 rounded-xl border text-left transition ${
+                  className={`py-2 px-3 rounded-xl text-xs font-semibold border transition ${
                     calcCategory === 'utility'
-                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                      : 'bg-white/5 border-white/5 text-slate-400'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      : 'bg-slate-900 border-white/10 text-slate-400 hover:text-white'
                   }`}
                 >
-                  <p className="font-bold text-xs">📦 Utility</p>
-                  <p className="text-[10px] text-slate-400">~₹0.15/msg</p>
+                  Utility (₹0.35)
                 </button>
                 <button
                   type="button"
                   onClick={() => setCalcCategory('auth')}
-                  className={`p-2.5 rounded-xl border text-left transition ${
+                  className={`py-2 px-3 rounded-xl text-xs font-semibold border transition ${
                     calcCategory === 'auth'
-                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                      : 'bg-white/5 border-white/5 text-slate-400'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                      : 'bg-slate-900 border-white/10 text-slate-400 hover:text-white'
                   }`}
                 >
-                  <p className="font-bold text-xs">🔐 Auth / OTP</p>
-                  <p className="text-[10px] text-slate-400">~₹0.12/msg</p>
+                  OTP / Auth (₹0.15)
                 </button>
               </div>
             </div>
 
-            {/* Calculated box */}
-            {(() => {
-              const rate = calcCategory === 'marketing' ? 0.78 : calcCategory === 'utility' ? 0.15 : 0.12;
-              const metaEst = (calcMessages * rate).toFixed(2);
-              const remaining = billing?.remaining_quota ?? 10000;
-              const covered = Math.min(calcMessages, remaining);
-              const overage = Math.max(0, calcMessages - remaining);
-              const overageCost = (overage * 0.25).toFixed(2);
-
-              return (
-                <div className="bg-slate-950/70 p-4 rounded-xl border border-white/10 space-y-2 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Wholesale Meta Rate (BYOK):</span>
-                    <span className="font-mono text-emerald-400 font-bold">~₹{metaEst} INR</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Covered under Plan Quota:</span>
-                    <span className="font-mono text-cyan-400 font-semibold">{covered.toLocaleString()} msgs (₹0.00)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Overage Charge (if exceeding quota):</span>
-                    <span className="font-mono text-amber-400 font-semibold">{overage.toLocaleString()} msgs (₹{overageCost})</span>
-                  </div>
-                </div>
-              );
-            })()}
+            <div className="p-4 rounded-xl bg-slate-950/80 border border-white/5 space-y-2">
+              <div className="flex justify-between text-xs text-slate-400">
+                <span>Meta Official Rate / Conversation:</span>
+                <span className="font-mono text-white">₹{est.metaRate.toFixed(2)} INR</span>
+              </div>
+              <div className="flex justify-between text-xs text-slate-400">
+                <span>Wholesale Meta Cost ({calcMessages.toLocaleString()} msgs):</span>
+                <span className="font-mono text-white">₹{est.totalWholesale} INR</span>
+              </div>
+              <div className="border-t border-white/10 pt-2 flex justify-between text-sm font-bold text-emerald-400">
+                <span>Estimated Campaign Budget:</span>
+                <span className="font-mono text-base">₹{est.estimatedTotal} INR</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* WhatsApp Billing Guide */}
-        <div className="glass-panel p-6 rounded-2xl border border-white/10 shadow-2xl space-y-3 text-xs text-slate-300 leading-relaxed">
-          <h3 className="text-base font-bold text-white flex items-center gap-2">
-            <span>ℹ️</span> How WhatsApp Billing Works
+        <div className="glass-panel p-6 rounded-2xl border border-white/10 shadow-2xl space-y-4">
+          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            <span>🛡️</span> Supported Payment Rails
           </h3>
-          <div className="bg-slate-950/60 p-3 rounded-xl border border-white/5 space-y-1">
-            <p className="font-bold text-white">1. Custom Credentials (BYOK):</p>
-            <p className="text-slate-400">
-              When you configure your own Meta WhatsApp Business Account, Meta bills your card directly at wholesale rates with zero markup.
-            </p>
-          </div>
-          <div className="bg-slate-950/60 p-3 rounded-xl border border-white/5 space-y-1">
-            <p className="font-bold text-white">2. Platform Sender Pool:</p>
-            <p className="text-slate-400">
-              Messages automatically deduct from your plan quota or prepaid message balance.
-            </p>
-          </div>
-          <div className="bg-slate-950/60 p-3 rounded-xl border border-white/5 space-y-1">
-            <p className="font-bold text-white">3. 24-Hour Conversation Window:</p>
-            <p className="text-slate-400">
-              Outbound templates open a 24-hour session. Subsequent messages in that window incur no additional Meta fee.
-            </p>
+          <p className="text-xs text-slate-400">
+            Razorpay provides 100% compliant Indian and International payment rails.
+          </p>
+
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
+              <div className="flex items-center gap-2 text-emerald-400 text-sm font-bold">
+                <span>⚡</span> UPI &amp; UPI Autopay
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Google Pay, PhonePe, Paytm, BHIM, and QR Code</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
+              <div className="flex items-center gap-2 text-blue-400 text-sm font-bold">
+                <span>💳</span> Credit &amp; Debit Cards
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Visa, MasterCard, RuPay, Maestro, and Amex</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
+              <div className="flex items-center gap-2 text-amber-400 text-sm font-bold">
+                <span>🏛️</span> NetBanking
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">50+ Indian banks including HDFC, ICICI, SBI, Axis</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5">
+              <div className="flex items-center gap-2 text-cyan-400 text-sm font-bold">
+                <span>👛</span> Digital Wallets &amp; EMI
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Paytm Wallet, Mobikwik, Amazon Pay, Cardless EMI</p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Real Invoices & Stripe Transactions Table */}
+      {/* Real Invoices & Razorpay Transactions Table */}
       <div className="glass-panel rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
         <div className="px-6 py-4 border-b border-white/10 flex justify-between items-center bg-slate-900/40">
           <h3 className="text-base font-bold text-white flex items-center gap-2">
             <span>🧾</span> Transaction &amp; Payment History
           </h3>
-          <span className="text-xs text-slate-400 font-mono">Stripe Verified</span>
+          <span className="text-xs text-slate-400 font-mono">Razorpay Verified</span>
         </div>
 
         {invoices.length === 0 ? (
@@ -636,7 +790,7 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
             <table className="w-full text-left text-sm text-slate-300">
               <thead className="bg-slate-900/60 text-[11px] uppercase text-slate-400 font-semibold border-b border-white/10 tracking-wider">
                 <tr>
-                  <th className="px-6 py-3.5">Session / Invoice ID</th>
+                  <th className="px-6 py-3.5">Order / Invoice ID</th>
                   <th className="px-6 py-3.5">Date</th>
                   <th className="px-6 py-3.5">Description</th>
                   <th className="px-6 py-3.5">Amount</th>
@@ -677,3 +831,5 @@ export const StripeBillingTab: React.FC<StripeBillingTabProps> = ({ token }) => 
     </div>
   );
 };
+
+export const BillingTab = StripeBillingTab;

@@ -306,7 +306,7 @@ export const AdminTenantsTab: React.FC<AdminTabProps> = ({ token }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FEATURE 2: Stripe Revenue & Global Transaction Feed
+// FEATURE 2: Razorpay & Platform Revenue Feed
 // ─────────────────────────────────────────────────────────────────────────────
 export const AdminRevenueTab: React.FC<AdminTabProps> = ({ token }) => {
   const [data, setData] = useState<{ summary: any; transactions: any[] } | null>(null);
@@ -336,7 +336,7 @@ export const AdminRevenueTab: React.FC<AdminTabProps> = ({ token }) => {
       <div className="flex justify-between items-center">
         <div>
           <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <span>💰</span> Platform Revenue &amp; Stripe Transaction Ledger
+            <span>💰</span> Platform Revenue &amp; Razorpay Transaction Ledger
           </h3>
           <p className="text-xs text-slate-400">
             Monitor real-time income collected across subscriptions and message top-ups.
@@ -354,7 +354,7 @@ export const AdminRevenueTab: React.FC<AdminTabProps> = ({ token }) => {
           <p className="text-2xl font-extrabold text-emerald-400 mt-1 font-mono">
             ₹{data?.summary?.total_revenue || data?.summary?.total_revenue_usd || '0.00'} INR
           </p>
-          <p className="text-xs text-slate-400 mt-0.5">All-time Stripe volume</p>
+          <p className="text-xs text-slate-400 mt-0.5">All-time Razorpay volume</p>
         </div>
 
         <div className="glass-panel p-4 rounded-xl border border-white/5 bg-slate-950/40">
@@ -385,7 +385,7 @@ export const AdminRevenueTab: React.FC<AdminTabProps> = ({ token }) => {
       {/* Transactions Table */}
       <div className="glass-panel rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
         <div className="px-5 py-3.5 border-b border-white/10 flex justify-between items-center bg-slate-900/40">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">Stripe Payment Stream</h4>
+          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">Razorpay Payment Stream</h4>
           <span className="text-[11px] text-slate-400 font-mono">Real-Time Sync</span>
         </div>
 
@@ -396,7 +396,7 @@ export const AdminRevenueTab: React.FC<AdminTabProps> = ({ token }) => {
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="bg-slate-900/60 uppercase text-[10px] font-bold tracking-wider text-slate-400 border-b border-white/10">
                 <tr>
-                  <th className="px-5 py-3">Stripe Session / ID</th>
+                  <th className="px-5 py-3">Order / Reference ID</th>
                   <th className="px-5 py-3">Tenant / Client</th>
                   <th className="px-5 py-3">Type</th>
                   <th className="px-5 py-3">Amount</th>

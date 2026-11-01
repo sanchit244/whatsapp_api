@@ -440,7 +440,7 @@ export const Dashboard: React.FC = () => {
                 : 'text-slate-300 hover:text-white hover:bg-white/5 border border-transparent'
             }`}
           >
-            <span>💰</span> Stripe Revenue
+            <span>💰</span> Razorpay Revenue
           </button>
           <button
             onClick={() => setActiveTab('blacklist')}

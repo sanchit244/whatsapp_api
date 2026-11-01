@@ -613,7 +613,7 @@ router.post(
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- * FEATURE 2: Stripe Revenue & Global Transaction Feed
+ * FEATURE 2: Razorpay & Platform Revenue Feed
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -660,7 +660,9 @@ router.get(
       try {
         const txList = await pool.query(`
           SELECT 
-            pt.id, pt.stripe_session_id, pt.amount_cents, pt.currency, pt.payment_type,
+            pt.id, COALESCE(pt.razorpay_order_id, pt.stripe_session_id) as stripe_session_id,
+            pt.razorpay_order_id, pt.razorpay_payment_id,
+            pt.amount_cents, pt.currency, pt.payment_type,
             pt.plan, pt.credits_added, pt.status, pt.customer_email, pt.created_at,
             t.name as tenant_name
           FROM payment_transactions pt

@@ -476,15 +476,18 @@ export async function initializeSchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_inbox_received ON inbox_messages(received_at);
     `));
 
-    // Payment Transactions table (Stripe checkouts & top-ups)
+    // Payment Transactions table (Razorpay orders, payments & top-ups)
     await client.query(toMySqlSchema(`
       CREATE TABLE IF NOT EXISTS payment_transactions (
         id CHAR(36) PRIMARY KEY,
         tenant_id CHAR(36) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        razorpay_order_id VARCHAR(255),
+        razorpay_payment_id VARCHAR(255),
+        razorpay_signature VARCHAR(255),
         stripe_session_id VARCHAR(255),
         stripe_payment_intent_id VARCHAR(255),
         amount_cents INT NOT NULL,
-        currency VARCHAR(10) DEFAULT 'usd',
+        currency VARCHAR(10) DEFAULT 'inr',
         payment_type VARCHAR(50) NOT NULL,
         plan VARCHAR(50),
         credits_added INT DEFAULT 0,
@@ -495,7 +498,19 @@ export async function initializeSchema(): Promise<void> {
       );
       CREATE INDEX IF NOT EXISTS idx_payment_tenant ON payment_transactions(tenant_id);
       CREATE INDEX IF NOT EXISTS idx_payment_session ON payment_transactions(stripe_session_id);
+      CREATE INDEX IF NOT EXISTS idx_payment_rzp_order ON payment_transactions(razorpay_order_id);
     `));
+
+    // Non-destructive column migrations for existing instances
+    try {
+      await client.query(`ALTER TABLE payment_transactions ADD COLUMN razorpay_order_id VARCHAR(255)`);
+    } catch {}
+    try {
+      await client.query(`ALTER TABLE payment_transactions ADD COLUMN razorpay_payment_id VARCHAR(255)`);
+    } catch {}
+    try {
+      await client.query(`ALTER TABLE payment_transactions ADD COLUMN razorpay_signature VARCHAR(255)`);
+    } catch {}
 
     // Global Blacklist / Do-Not-Call (DNC) Registry
     await client.query(toMySqlSchema(`

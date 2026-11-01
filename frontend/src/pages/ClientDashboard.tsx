@@ -525,7 +525,7 @@ export const ClientDashboard: React.FC = () => {
               onClick={() => { setActiveTab('billing'); setMobileMenuOpen(false); }}
               className={`px-4 py-3 rounded-xl text-xs font-bold flex items-center gap-2 transition ${activeTab === 'billing' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-900/60 text-slate-300 border border-white/5'}`}
             >
-              <span>💳</span> Billing &amp; Stripe
+              <span>💳</span> Billing &amp; Razorpay
             </button>
             <button
               onClick={() => { setActiveTab('analytics'); setMobileMenuOpen(false); }}

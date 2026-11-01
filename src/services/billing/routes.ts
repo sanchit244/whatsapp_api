@@ -129,7 +129,20 @@ router.get(
   }
 );
 
-import { StripeService, CREDIT_PACKS } from './stripeService';
+import { RazorpayService, CREDIT_PACKS } from './razorpayService';
+
+/**
+ * GET /api/v1/billing/config
+ * Public Razorpay Key ID and status
+ */
+router.get('/config', (req, res) => {
+  res.json({
+    success: true,
+    keyId: RazorpayService.getKeyId(),
+    isConfigured: RazorpayService.isConfigured(),
+    currency: 'INR',
+  });
+});
 
 /**
  * GET /api/v1/billing/credit-packs
@@ -144,7 +157,7 @@ router.get('/credit-packs', (req, res) => {
 
 /**
  * GET /api/v1/billing/invoices
- * Invoices and payment history (including Stripe transactions)
+ * Invoices and payment history (including Razorpay transactions)
  */
 router.get(
   '/invoices',
@@ -164,7 +177,7 @@ router.get(
       let realTxRows: any[] = [];
       try {
         const txRes = await pool.query(
-          `SELECT id, stripe_session_id, amount_cents, currency, payment_type, plan, credits_added, status, created_at
+          `SELECT id, COALESCE(razorpay_order_id, stripe_session_id) as reference_id, amount_cents, currency, payment_type, plan, credits_added, status, created_at
            FROM payment_transactions
            WHERE tenant_id = $1
            ORDER BY created_at DESC
@@ -177,7 +190,7 @@ router.get(
       }
 
       const invoices: any[] = realTxRows.map((tx) => ({
-        id: tx.stripe_session_id || `TX-${tx.id.substring(0, 8).toUpperCase()}`,
+        id: tx.reference_id || `TX-${tx.id.substring(0, 8).toUpperCase()}`,
         period: new Date(tx.created_at).toLocaleString('default', { month: 'short', day: 'numeric', year: 'numeric' }),
         plan: tx.payment_type === 'subscription' ? (tx.plan ? `${tx.plan.toUpperCase()} Plan` : 'Subscription') : `Top-Up (${tx.credits_added.toLocaleString()} credits)`,
         amount: (tx.amount_cents / 100).toFixed(2),
@@ -213,11 +226,11 @@ router.get(
 );
 
 /**
- * POST /api/v1/billing/create-checkout-session
- * Generate Stripe Checkout Session URL for Plan Upgrade or Credit Top-Up
+ * POST /api/v1/billing/create-order
+ * Generate Razorpay Order for Plan Upgrade or Credit Top-Up
  */
 router.post(
-  '/create-checkout-session',
+  '/create-order',
   tenantMiddleware,
   requireRole('owner', 'admin'),
   async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -236,7 +249,7 @@ router.post(
       const defaultSuccessUrl = `${clientHost}/dashboard?payment=success`;
       const defaultCancelUrl = `${clientHost}/dashboard?payment=cancelled`;
 
-      const session = await StripeService.createCheckoutSession({
+      const orderData = await RazorpayService.createOrder({
         tenantId: req.tenantId,
         userEmail: (req as any).user?.email,
         type,
@@ -249,9 +262,15 @@ router.post(
 
       res.json({
         success: true,
-        sessionId: session.sessionId,
-        checkoutUrl: session.checkoutUrl,
-        mode: session.mode,
+        orderId: orderData.orderId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        keyId: orderData.keyId,
+        title: orderData.title,
+        description: orderData.description,
+        mode: orderData.mode,
+        sessionId: orderData.sessionId,
+        checkoutUrl: orderData.checkoutUrl,
       });
     } catch (error) {
       next(error);
@@ -260,8 +279,88 @@ router.post(
 );
 
 /**
- * POST /api/v1/billing/fulfill-session
- * Verify and apply payment fulfillment immediately (used after return from Stripe)
+ * POST /api/v1/billing/create-checkout-session (Backward compatible alias for create-order)
+ */
+router.post(
+  '/create-checkout-session',
+  tenantMiddleware,
+  requireRole('owner', 'admin'),
+  async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.tenantId) {
+        throw new ValidationError('Tenant context missing');
+      }
+
+      const { type, plan, credit_pack, custom_credits, success_url, cancel_url } = req.body;
+
+      const orderData = await RazorpayService.createOrder({
+        tenantId: req.tenantId,
+        userEmail: (req as any).user?.email,
+        type: type || 'credit_topup',
+        planKey: plan,
+        creditPackKey: credit_pack,
+        customCredits: custom_credits ? parseInt(custom_credits) : undefined,
+        successUrl: success_url,
+        cancelUrl: cancel_url,
+      });
+
+      res.json({
+        success: true,
+        orderId: orderData.orderId,
+        sessionId: orderData.orderId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        keyId: orderData.keyId,
+        checkoutUrl: orderData.checkoutUrl || `${success_url || ''}?session_id=${orderData.orderId}`,
+        mode: orderData.mode,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * POST /api/v1/billing/verify-payment
+ * Verify Razorpay payment signature & apply quota fulfillment
+ */
+router.post(
+  '/verify-payment',
+  tenantMiddleware,
+  requireRole('owner', 'admin'),
+  async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.tenantId) {
+        throw new ValidationError('Tenant context missing');
+      }
+
+      const { order_id, razorpay_order_id, payment_id, razorpay_payment_id, signature, razorpay_signature } = req.body;
+      const effectiveOrderId = order_id || razorpay_order_id;
+      const effectivePaymentId = payment_id || razorpay_payment_id;
+      const effectiveSignature = signature || razorpay_signature;
+
+      if (!effectiveOrderId) {
+        throw new ValidationError('order_id is required');
+      }
+
+      const result = await RazorpayService.verifyPayment({
+        orderId: effectiveOrderId,
+        paymentId: effectivePaymentId,
+        signature: effectiveSignature,
+        tenantId: req.tenantId,
+      });
+
+      res.json({
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * POST /api/v1/billing/fulfill-session (Backward compatible alias for verify-payment)
  */
 router.post(
   '/fulfill-session',
@@ -273,12 +372,19 @@ router.post(
         throw new ValidationError('Tenant context missing');
       }
 
-      const { session_id } = req.body;
-      if (!session_id) {
-        throw new ValidationError('session_id is required');
+      const { session_id, order_id, payment_id, signature } = req.body;
+      const effectiveOrderId = session_id || order_id;
+
+      if (!effectiveOrderId) {
+        throw new ValidationError('session_id or order_id is required');
       }
 
-      const result = await StripeService.fulfillCheckoutSession(session_id, req.tenantId);
+      const result = await RazorpayService.verifyPayment({
+        orderId: effectiveOrderId,
+        paymentId: payment_id,
+        signature,
+        tenantId: req.tenantId,
+      });
 
       res.json({
         ...result,
@@ -291,15 +397,15 @@ router.post(
 
 /**
  * POST /api/v1/billing/webhook
- * Public Stripe webhook endpoint
+ * Public Razorpay webhook endpoint
  */
 router.post('/webhook', async (req, res) => {
-  const sig = req.headers['stripe-signature'] as string;
+  const sig = (req.headers['x-razorpay-signature'] || req.headers['stripe-signature']) as string;
   try {
-    await StripeService.handleWebhook(req.body, sig || '');
+    await RazorpayService.handleWebhook(req.body, sig || '');
     res.json({ received: true });
   } catch (err: any) {
-    logger.error(`Stripe webhook error: ${err.message}`);
+    logger.error(`Razorpay webhook error: ${err.message}`);
     res.status(400).send(`Webhook Error: ${err.message}`);
   }
 });
